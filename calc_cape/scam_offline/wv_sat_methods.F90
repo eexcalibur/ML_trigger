@@ -50,7 +50,7 @@ integer, parameter :: MurphyKoop_idx = 2
 integer, parameter :: Bolton_idx = 3
 
 ! Index representing the current default scheme.
-integer, parameter :: initial_default_idx = Bolton_idx
+integer, parameter :: initial_default_idx = GoffGratch_idx
 integer :: default_idx = initial_default_idx
 
 public wv_sat_methods_init

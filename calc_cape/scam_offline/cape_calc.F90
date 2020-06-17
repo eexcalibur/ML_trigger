@@ -1,6 +1,6 @@
 program cape_calc
     use netcdf
-    use zm_conv, only: buoyan, buoyan_dilute,zm_convi
+    use zm_conv, only: buoyan, buoyan_dilute,zm_convi,buoyan_dilute_1
     use shr_kind_mod,    only: r8 => shr_kind_r8
     use physconst,       only: cpair, epsilo, gravit, latice, latvap, tmelt, rair, &
                                cpwv, cpliq, rh2o
@@ -47,10 +47,12 @@ program cape_calc
     grav = gravit 
     cpres = cpair 
     tpert = 0.0
-    pblt = 30
-    msg = 4
+    pblt = 23
+    msg = 1
 
-    status =NF90_OPEN("continuous_at_goamazon.nc",NF90_NOWRITE,NCID )
+    !status =NF90_OPEN("continuous_at_goamazon.nc",NF90_NOWRITE,NCID )
+    !status =NF90_OPEN("Arm_CF_1999_2009_uniform.nc",NF90_NOWRITE,NCID )
+    status =NF90_OPEN("goamazon_2014_2015.nc",NF90_NOWRITE,NCID )
 
     status = NF90_INQ_DIMID( ncid, 'lev', dimID )
     status = nf90_inquire_dimension( ncid, dimID, len=nlevOBS )
@@ -117,7 +119,7 @@ program cape_calc
     do j=1, ntimeobs
     do i=1, nlevobs
        !zOBS(i,1) = 288/6.5 * (1 - (levOBS(i)/1013.25) ** (0.287 * 6.5/9.8)) * 1000.0
-       zOBS(i,j) = tOBS(nlevobs-5,j)/6.5 * (1 - (levOBS(i)/psOBS(j)) ** (0.287 * 6.5/9.8)) * 1000.0
+       zOBS(i,j) = tOBS(nlevobs-1,j)/6.5 * (1 - (levOBS(i)/psOBS(j)) ** (0.287 * 6.5/9.8)) * 1000.0
        !zOBS(i,1) = 287.05 * tOBS(i,1) / 9.8 * log(psOBS(1)/levobs(i))
     end do
     end do
@@ -132,11 +134,12 @@ program cape_calc
     !print debug
     write(*,*)"debug p_obs"
     write(*,*)levOBS
-    write(*,*)"debug pf_obs"
-    write(*,*)pfOBS
     write(*,*)"debug z_obs"
     write(*,*)zOBS(:,3)
-
+    write(*,*)"debug t_obs"
+    write(*,*)tOBS(:,3)
+    write(*,*)"debug q_obs"
+    write(*,*)qOBS(:,3)
 
     do i=1,ntimeobs
        call buoyan_dilute(1   ,1    , &
@@ -150,19 +153,34 @@ program cape_calc
      end do
 
      open(1001, file="goamazon_cape.txt")
-     open(1002, file="goamazon_maxi.txt")
-     open(1003, file="goamazon_tp.txt")
      do i=1, ntimeobs
         write(1001,"(F16.4)") capeOBS(i)
-        write(1002,"(F16.4)") mxobs(i)
-     end do
-
-     do i=1, nlevobs
-         write(1003,"(F8.2)") tp(1,i)
      end do
      close(1001)
-     close(1002)
-     close(1003)
 
-    write(*,*)"zhangtao"
+    do i=1,ntimeobs
+    do j=1,nlevobs
+       qobs(j,i) = qobs(j,i) + (divqHobs(j,i) + divqVobs(j,i)) * 3600.0 * 3
+       tobs(j,i) = tobs(j,i) + (divtHobs(j,i) - divtVobs(j,i)) * 3600.0 * 3
+       if (qobs(j,i) < 0) then
+           qobs(j,i) = 1.0e-12
+       end if
+    end do
+    end do
+
+    do i=1,ntimeobs
+       maxi = mxobs(i)
+       call buoyan_dilute_1(1   ,1    , &
+                    qOBS(1:nlevobs,i),tOBS(1:nlevobs, i),levOBS(1:nlevobs),zOBS(1:nlevobs,i),pfOBS(1:nlevobs+1)       , &
+                    tp      ,qstp    ,tl      ,rl      ,cape     , &
+                    pblt    ,lcl     ,lel     ,lon     ,maxi     , &
+                    rgas    ,grav    ,cpres   ,msg     , &
+                    tpert   )
+        capeOBS(i) = (cape(1) - capeOBS(i))/3.0
+     end do
+     open(1001, file="goamazon_dcape.txt")
+     do i=1, ntimeobs
+        write(1001,"(F16.4)") capeOBS(i)
+     end do
+     close(1001)
 end program cape_calc

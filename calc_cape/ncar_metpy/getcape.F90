@@ -80,7 +80,7 @@
     real, parameter :: ml_depth =  200.0  ! depth (m) of mixed layer 
                                           ! for source=3
 
-    integer, parameter :: adiabat = 4   ! Formulation of moist adiabat:
+    integer, parameter :: adiabat = 1   ! Formulation of moist adiabat:
                                         ! 1 = pseudoadiabatic, liquid only
                                         ! 2 = reversible, liquid only
                                         ! 3 = pseudoadiabatic, with ice

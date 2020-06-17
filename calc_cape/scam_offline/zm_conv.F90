@@ -289,8 +289,6 @@ subroutine buoyan(lchnk   ,ncol    , &
             tv(i,k) = t(i,k)* (1._r8+1.608_r8*q(i,k))/ (1._r8+q(i,k))
             qstp(i,k) = q(i,mx(i))
             tp(i,k) = tl(i)* (p(i,k)/pl(i))**(0.2854_r8* (1._r8-0.28_r8*qstp(i,k)))
-            !write(*,*)"define"
-            !write(*,*)k,tp(i,k), tl(i), p(i,k), pl(i), qstp(i,k)
 !              estp(i)  =exp(21.656_r8 - 5418._r8/tp(i,k))
 ! use of different formulas for es has about 1 g/kg difference
 ! in qs at t= 300k, and 0.02 g/kg at t=263k, with the formula
@@ -307,8 +305,6 @@ subroutine buoyan(lchnk   ,ncol    , &
             a2(i) = -a2(i)*a1(i)**3
             y(i) = q(i,mx(i)) - qstp(i,k)
             tp(i,k) = tp(i,k) + a1(i)*y(i) + a2(i)*y(i)**2
-            !write(*,*)tp(i,k),estp(i), qstp(i,k)
-            !call exit(1)
             call qmmr_hPa(tp(i,k), p(i,k), estp(i), qstp(i,k))
 !
 ! buoyancy is increased by 0.5 k in cape calculation.
@@ -574,7 +570,6 @@ subroutine buoyan_dilute(lchnk   ,ncol    , &
 
    call parcel_dilute(lchnk, ncol, msg, mx, p, t, q, tpert, tp, tpv, qstp, pl, tl, lcl)
 
-
 ! If lcl is above the nominal level of non-divergence (600 mbs),
 ! no deep convection is permitted (ensuing calculations
 ! skipped and cape retains initialized value of zero).
@@ -599,10 +594,6 @@ subroutine buoyan_dilute(lchnk   ,ncol    , &
       end do
    end do
 
-!write(*,*)tv
-!write(*,*)"tpv"
-!write(*,*)tpv
-!call exit(1)
 !-------------------------------------------------------------------------------
 
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -852,10 +843,6 @@ subroutine buoyan_dilute_1(lchnk   ,ncol    , &
       end do
    end do
 
-!write(*,*)tv
-!write(*,*)"tpv"
-!write(*,*)tpv
-!call exit(1)
 !-------------------------------------------------------------------------------
 
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -1000,8 +987,19 @@ integer i,k,ii   ! Loop counters.
 !
 
 nit_lheat = 2 ! iterations for ds,dq changes from condensation freezing.
-!dmpdz=-1.e-3_r8        ! Entrainment rate. (-ve for /m)
-dmpdz=0.0        ! Entrainment rate. (-ve for /m)
+dmpdz=-1.e-3_r8        ! Entrainment rate. (-ve for /m)
+!dmpdz=-0.25e-3_r8        ! Entrainment rate. (-ve for /m)
+!dmpdz=0.0        ! Entrainment rate. (-ve for /m)
+!dmpdpc = 3.e-2_r8   ! In cloud entrainment rate (/mb).
+lwmax = 1.e-3_r8    ! Need to put formula in for this.
+tscool = 0.0_r8   ! Temp at which water loading freezes in the cloud.
+
+qtmix=0._r8
+smix=0._r8
+
+qtenv = 0._r8
+senv = 0._r8
+!dmpdz=0.0        ! Entrainment rate. (-ve for /m)
 !dmpdpc = 3.e-2_r8   ! In cloud entrainment rate (/mb).
 lwmax = 1.e-3_r8    ! Need to put formula in for this.
 tscool = 0.0_r8   ! Temp at which water loading freezes in the cloud.
@@ -1043,6 +1041,7 @@ do k = pver, msg+1, -1
          call ientropy (rcall,i,lchnk,smix(i,k),p(i,k),qtmix(i,k),tmix(i,k),qsmix(i,k),tfguess)
       end if
 
+
 ! Entraining levels
       
       if (k < klaunch(i)) then 
@@ -1081,7 +1080,6 @@ do k = pver, msg+1, -1
          tfguess = tmix(i,k+1)
          rcall = 2
          call ientropy(rcall,i,lchnk,smix(i,k),p(i,k),qtmix(i,k),tmix(i,k),qsmix(i,k),tfguess)   
-
 !
 ! Determine if this is lcl of this column if qsmix <= qtmix.
 ! FIRST LEVEL where this happens on ascending.
@@ -1100,7 +1098,6 @@ do k = pver, msg+1, -1
             tfguess = tmix(i,k)
             rcall = 3
             call ientropy (rcall,i,lchnk,slcl,pl(i),qtlcl,tl(i),qslcl,tfguess)
-
 !            write(iulog,*)' '
 !            write(iulog,*)' p',p(i,k+1),pl(i),p(i,lcl(i))
 !            write(iulog,*)' t',tmix(i,k+1),tl(i),tmix(i,lcl(i))
@@ -1199,6 +1196,7 @@ do k = pver, msg+1, -1
             
          end do  ! Iteration loop for freezing processes.
 
+
 ! tp  - Parcel temp is temp of mixture.
 ! tpv - Parcel v. temp should be density temp with new_q total water. 
 
@@ -1218,9 +1216,6 @@ do k = pver, msg+1, -1
    end do ! Loop for columns
 end do  ! Loop for vertical levels.
 
-!      write(*,*) "tpv in parcel"
-!      write(*,*) tmix
-!      call exit(1)
 
 return
 end subroutine parcel_dilute
@@ -1288,6 +1283,7 @@ converge: do i=0, LOOPMAX
    L = rl - (cpliq - cpwv)*(Ts-tfreez) 
 
    call qmmr_hPa(Ts, p, est, qst)
+
    qv = min(qt,qst) 
    e = qv*p / (eps1 +qv)  ! Bolton (eq. 16)
    fs1 = (cpres + qt*cpliq)*log( Ts/tfreez ) - rgas*log( (p-e)/pref ) + &
@@ -1302,13 +1298,6 @@ converge: do i=0, LOOPMAX
         L*qv/(Ts-1._r8) - qv*rh2o*log(qv/qst) - s 
    
    dTs = fs1/(fs2 - fs1)
-   !write(*,*)"dTs"
-   !write(*,*)dTs
-   !write(*,*)"fs1"
-   !write(*,*)fs1
-   !write(*,*)"cpres"
-   !write(*,*)cpres, qt, cpliq, Ts, tfreez, rgas, pref, L, qv, rh2o
-   !call exit(1)
    Ts  = Ts+dTs
    if (abs(dTs).lt.0.001_r8) exit converge
  !  if (i .eq. LOOPMAX - 1) then
@@ -1338,7 +1327,8 @@ end SUBROUTINE ientropy
 ! Wrapper for qmmr that does translation between Pa and hPa
 ! qmmr uses Pa internally, so get qmmr right, need to pass in Pa.
 ! Afterward, set es back to hPa.
-elemental subroutine qmmr_hPa(t, p, es, qm)
+!elemental subroutine qmmr_hPa(t, p, es, qm)
+subroutine qmmr_hPa(t, p, es, qm)
   !use wv_saturation, only: qmmr
 
   ! Inputs

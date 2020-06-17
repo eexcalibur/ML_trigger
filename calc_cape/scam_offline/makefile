@@ -1,6 +1,6 @@
 LDFLAGS =
 LDFLAGS +=
-FCFLAGS = -I/opt/cray/pe/netcdf/4.6.3.2/INTEL/19.0/include -L/opt/cray/pe/netcdf/4.6.3.2/INTEL/19.0/lib -lnetcdff -lnetcdf
+FCFLAGS = -O0  -I/opt/cray/pe/netcdf/4.6.3.2/INTEL/19.0/include -L/opt/cray/pe/netcdf/4.6.3.2/INTEL/19.0/lib -lnetcdff -lnetcdf
 FCFLAGS +=
 FC = ifort
 
