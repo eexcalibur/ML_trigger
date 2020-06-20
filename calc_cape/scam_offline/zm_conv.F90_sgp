@@ -47,8 +47,8 @@ module zm_conv
    real(r8) :: tfreez
    real(r8) :: eps1
    integer, parameter :: pcols = 1
-   integer, parameter :: pver = 40
-   integer, parameter :: pverp = 40
+   integer, parameter :: pver = 35
+   integer, parameter :: pverp = 35
       
 
    logical :: no_deep_pbl ! default = .false.
