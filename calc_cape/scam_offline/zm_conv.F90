@@ -47,8 +47,8 @@ module zm_conv
    real(r8) :: tfreez
    real(r8) :: eps1
    integer, parameter :: pcols = 1
-   integer, parameter :: pver = 40
-   integer, parameter :: pverp = 40
+   integer, parameter :: pver = 35
+   integer, parameter :: pverp = 35
       
 
    logical :: no_deep_pbl ! default = .false.
@@ -989,7 +989,7 @@ integer i,k,ii   ! Loop counters.
 nit_lheat = 2 ! iterations for ds,dq changes from condensation freezing.
 dmpdz=-1.0e-3_r8        ! Entrainment rate. (-ve for /m)
 !dmpdz=-0.25e-3_r8        ! Entrainment rate. (-ve for /m)
-!dmpdz=0.0        ! Entrainment rate. (-ve for /m)
+dmpdz=0.0        ! Entrainment rate. (-ve for /m)
 !dmpdpc = 3.e-2_r8   ! In cloud entrainment rate (/mb).
 lwmax = 1.e-3_r8    ! Need to put formula in for this.
 tscool = 0.0_r8   ! Temp at which water loading freezes in the cloud.

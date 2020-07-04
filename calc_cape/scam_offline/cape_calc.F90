@@ -46,13 +46,13 @@ program cape_calc
     rgas = rair 
     grav = gravit 
     cpres = cpair 
-    tpert = 0.5
-    pblt = 30
+    tpert = 0.0
+    pblt = 25
     msg = 1
 
     !status =NF90_OPEN("continuous_at_goamazon.nc",NF90_NOWRITE,NCID )
-    !status =NF90_OPEN("Arm_CF_1999_2009_uniform.nc",NF90_NOWRITE,NCID )
-    status =NF90_OPEN("goamazon_2014_2015.nc",NF90_NOWRITE,NCID )
+    status =NF90_OPEN("Arm_CF_1999_2009_uniform.nc",NF90_NOWRITE,NCID )
+    !status =NF90_OPEN("goamazon_2014_2015.nc",NF90_NOWRITE,NCID )
     !status =NF90_OPEN("mao_IOP1_20140201.nc",NF90_NOWRITE,NCID )
 
     status = NF90_INQ_DIMID( ncid, 'lev', dimID )
@@ -177,7 +177,7 @@ program cape_calc
                     pblt    ,lcl     ,lel     ,lon     ,maxi     , &
                     rgas    ,grav    ,cpres   ,msg     , &
                     tpert   )
-        capeOBS(i) = (cape(1) - capeOBS(i)) / 3.0
+        capeOBS(i) = (cape(1) - capeOBS(i)) 
      end do
      open(1001, file="goamazon_dcape.txt")
      do i=1, ntimeobs

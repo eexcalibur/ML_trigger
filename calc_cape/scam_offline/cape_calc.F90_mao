@@ -46,7 +46,7 @@ program cape_calc
     rgas = rair 
     grav = gravit 
     cpres = cpair 
-    tpert = 0.5
+    tpert = 0.0
     pblt = 30
     msg = 1
 
