@@ -102,7 +102,7 @@ program cape_calc
     divqHOBS = tmp_2d(nlevOBS:1:-1,:) / 3600.0 / 1000.0
 
     !horizontal t adv
-    status = nf90_inq_varid( ncid, 'T_adv_h', varid   ) !K/hour
+    status = nf90_inq_varid( ncid, 's_adv_h', varid   ) !K/hour
     status = nf90_get_var (ncid, varid, tmp_2d)
     divtHOBS = tmp_2d(nlevOBS:1:-1,:) / 3600.0
 
@@ -112,7 +112,7 @@ program cape_calc
     divqVOBS = tmp_2d(nlevOBS:1:-1,:) / 3600.0 / 1000.0
 
     !vertical t adv
-    status = nf90_inq_varid( ncid, 'T_adv_v', varid   ) !K/hour
+    status = nf90_inq_varid( ncid, 's_adv_v', varid   ) !K/hour
     status = nf90_get_var (ncid, varid, tmp_2d)
     divtVOBS = tmp_2d(nlevOBS:1:-1,:) / 3600.0
 
@@ -161,8 +161,8 @@ program cape_calc
 
     do i=1,ntimeobs
     do j=1,nlevobs
-       qobs(j,i) = qobs(j,i) + (divqHobs(j,i) + divqVobs(j,i)) * 3600.0 
-       tobs(j,i) = tobs(j,i) + (divtHobs(j,i) - divtVobs(j,i)) * 3600.0 
+       qobs(j,i) = qobs(j,i) + (divqHobs(j,i) + divqVobs(j,i)) * 3600.0
+       tobs(j,i) = tobs(j,i) + (divtHobs(j,i) + divtVobs(j,i)) * 3600.0 
        if (qobs(j,i) < 0) then
            qobs(j,i) = 1.0e-12
        end if
