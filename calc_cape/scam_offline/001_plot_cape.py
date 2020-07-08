@@ -4,8 +4,8 @@ import pandas as pd
 import sys 
 
 #data = np.loadtxt("goamazon_maxi.txt")
-data = np.loadtxt("goamazon_cape.txt")
-data1 = np.loadtxt("goamazon_dcape.txt")
+data = np.loadtxt("divs/mao_iop1_cape_tiedke_0.0.txt")
+data1 = np.loadtxt("divs/mao_iop1_dcape_tiedke_0.0.txt")
 data2 = np.zeros(data.shape[0])
 
 fig, ax = plt.subplots(1,1,figsize=(7,4))

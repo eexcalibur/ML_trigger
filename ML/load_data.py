@@ -279,8 +279,8 @@ def load_sgp():
     return df
 
 
-def load_sgp_data(file_name):
-    fid = Dataset(file_name)
+def load_sgp_data(file_dir,file_name):
+    fid = Dataset(file_dir+file_name)
     lev_name = [117,138,162,191,226,268,316,374,441,521,607,689,761,819,858,886,912,936,957,976,993]
 #feature names
     feats = ["" for x in range(86)]
@@ -334,8 +334,8 @@ def load_sgp_data(file_name):
     lev  = fid.variables['lev'][10:].reshape(nlev,1)
 
 
-    cape = np.loadtxt("/global/homes/z/zhangtao/ML_trigger/ML/data/sgp_dilute_dcape").reshape(ntime,1)
-    lcl  = np.loadtxt("/global/homes/z/zhangtao/ML_trigger/ML/data/sgp_dilute_lcl").reshape(ntime,1)
+    cape = np.loadtxt(file_dir+"sgp_dilute_dcape").reshape(ntime,1)
+    lcl  = np.loadtxt(file_dir+"sgp_dilute_lcl").reshape(ntime,1)
 
 #set the label 
     prec_threshold = 0.5
@@ -359,8 +359,8 @@ def load_sgp_data(file_name):
 
     return trig_dataset_df
 
-def load_arm_hy(file_name):
-    fid = Dataset(file_name)
+def load_arm_hy(file_dir,file_name):
+    fid = Dataset(file_dir+file_name)
 
     lev_name = [117,138,162,191,226,268,316,374,441,521,607,689,761,819,858,886,912,936,957,976,993]
 #feature names
@@ -399,8 +399,8 @@ def load_arm_hy(file_name):
     mon  = fid.variables['month'][:].reshape(ntime,1)
     year = fid.variables['year'][:].reshape(ntime,1)
     
-    cape = np.loadtxt("/global/homes/z/zhangtao/ML_trigger/ML/data/goamazon_dilute_dcape").reshape(ntime,1)
-    lcl  = np.loadtxt("/global/homes/z/zhangtao/ML_trigger/ML/data/goamazon_dilute_lcl").reshape(ntime,1)
+    cape = np.loadtxt(file_dir+"/goamazon_dilute_dcape").reshape(ntime,1)
+    lcl  = np.loadtxt(file_dir+"goamazon_dilute_lcl").reshape(ntime,1)
 
 #set the label 
     prec_threshold = 0.5

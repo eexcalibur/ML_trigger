@@ -162,7 +162,7 @@ program cape_calc
     do i=1,ntimeobs
     do j=1,nlevobs
        qobs(j,i) = qobs(j,i) + (divqHobs(j,i) + divqVobs(j,i)) * 3600.0
-       tobs(j,i) = tobs(j,i) + (divtHobs(j,i) + divtVobs(j,i)) * 3600.0 
+       tobs(j,i) = tobs(j,i) + (divtHobs(j,i) + divtVobs(j,i)) * 3600.0
        if (qobs(j,i) < 0) then
            qobs(j,i) = 1.0e-12
        end if
@@ -177,7 +177,7 @@ program cape_calc
                     pblt    ,lcl     ,lel     ,lon     ,maxi     , &
                     rgas    ,grav    ,cpres   ,msg     , &
                     tpert   )
-        capeOBS(i) = (cape(1) - capeOBS(i)) 
+        capeOBS(i) = (cape(1) - capeOBS(i)) / 1.0
      end do
      open(1001, file="goamazon_dcape.txt")
      do i=1, ntimeobs
