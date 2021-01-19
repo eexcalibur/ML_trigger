@@ -47,11 +47,13 @@ program cape_calc
     grav = gravit 
     cpres = cpair 
     tpert = 0.0
-    pblt = 25
+    pblt = 30
     msg = 1
 
     !status =NF90_OPEN("continuous_at_goamazon.nc",NF90_NOWRITE,NCID )
-    status =NF90_OPEN("Arm_CF_1999_2009_uniform.nc",NF90_NOWRITE,NCID )
+    !status =NF90_OPEN("Arm_CF_1999_2009_uniform.nc",NF90_NOWRITE,NCID )
+    !status =NF90_OPEN("/global/u2/z/zhangtao/CPS_trigger/data/sgp/arm_continuous_at_sgp/ARM97_4scam_uniform.nc",NF90_NOWRITE,NCID )
+    status =NF90_OPEN("/global/homes/z/zhangtao/ML_trigger/ML/data/TWP06_4scam_uniform.nc",NF90_NOWRITE,NCID )
     !status =NF90_OPEN("goamazon_2014_2015.nc",NF90_NOWRITE,NCID )
     !status =NF90_OPEN("mao_IOP1_20140201.nc",NF90_NOWRITE,NCID )
 
@@ -79,7 +81,7 @@ program cape_calc
     !lev
     status = nf90_inq_varid( ncid, 'lev', varid ) !mb
     status = nf90_get_var (ncid, varid, tmp_1d)
-    levOBS = tmp_1d(nlevOBS:1:-1)
+    levOBS = tmp_1d(nlevOBS:1:-1) / 100
 
     !surface pressure
     status = nf90_inq_varid( ncid, 'p_srf_aver', varid) !mb
@@ -153,7 +155,7 @@ program cape_calc
         mxOBS(i) = maxi(1)
      end do
 
-     open(1001, file="goamazon_cape.txt")
+     open(1001, file="twp06_cape.txt")
      do i=1, ntimeobs
         write(1001,"(F16.4)") capeOBS(i)
      end do
@@ -161,8 +163,8 @@ program cape_calc
 
     do i=1,ntimeobs
     do j=1,nlevobs
-       qobs(j,i) = qobs(j,i) + (divqHobs(j,i) + divqVobs(j,i)) * 3600.0
-       tobs(j,i) = tobs(j,i) + (divtHobs(j,i) + divtVobs(j,i)) * 3600.0
+       qobs(j,i) = qobs(j,i) + (divqHobs(j,i) + divqVobs(j,i)) * 3600.0 / 3
+       tobs(j,i) = tobs(j,i) + (divtHobs(j,i) + divtVobs(j,i)) * 3600.0  / 3
        if (qobs(j,i) < 0) then
            qobs(j,i) = 1.0e-12
        end if
@@ -177,9 +179,9 @@ program cape_calc
                     pblt    ,lcl     ,lel     ,lon     ,maxi     , &
                     rgas    ,grav    ,cpres   ,msg     , &
                     tpert   )
-        capeOBS(i) = (cape(1) - capeOBS(i)) / 1.0
+        capeOBS(i) = (cape(1) - capeOBS(i)) / 0.33
      end do
-     open(1001, file="goamazon_dcape.txt")
+     open(1001, file="twp06_dcape.txt")
      do i=1, ntimeobs
         write(1001,"(F16.4)") capeOBS(i)
      end do

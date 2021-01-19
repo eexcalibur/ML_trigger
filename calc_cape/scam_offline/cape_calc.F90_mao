@@ -1,187 +1,1398 @@
-program cape_calc
-    use netcdf
-    use zm_conv, only: buoyan, buoyan_dilute,zm_convi,buoyan_dilute_1
-    use shr_kind_mod,    only: r8 => shr_kind_r8
-    use physconst,       only: cpair, epsilo, gravit, latice, latvap, tmelt, rair, &
-                               cpwv, cpliq, rh2o
-    implicit none
-    
-    integer status,NCID,i,j
-    integer dimID,nlevOBS,ntimeOBS,varid
-    real(r8), allocatable :: tmp_1d(:)
-    real(r8), allocatable :: tmp_2d(:, :)
-    real(r8), allocatable :: levOBS( : )
-    real(r8), allocatable :: pfOBS( : )
-    real(r8), allocatable :: psOBS( : )
-    real(r8), allocatable :: capeOBS( : )
-    real(r8), allocatable :: mxOBS( : )
-    real(r8), allocatable :: qOBS( :, : )
-    real(r8), allocatable :: sqOBS( :,: )
-    real(r8), allocatable :: tOBS( :,: )
-    real(r8), allocatable :: divtHOBS( :,: )
-    real(r8), allocatable :: divqHOBS( :,: )
-    real(r8), allocatable :: divtVOBS( :,: )
-    real(r8), allocatable :: divqVOBS( :,: )
-    real(r8), allocatable :: zOBS( :,: )
 
-    real(r8) cape(1)
-    real(r8) tl(1)
-    real(r8) tpert(1)
-    integer lcl(1)                  
-    integer lel(1)                  
-    integer lon(1)                  
-    integer maxi(1)
-    real(r8) pblt(1)
-    integer msg
-    real(r8) tp(1,45)
-    real(r8) qstp(1,45)
-    real(r8) rl
-    real(r8) rgas
-    real(r8) grav
-    real(r8) cpres
+module zm_conv
 
-    call zm_convi()
+!---------------------------------------------------------------------------------
+! Purpose:
+!
+! Interface from Zhang-McFarlane convection scheme, includes evaporation of convective 
+! precip from the ZM scheme
+!
+! Apr 2006: RBN: Code added to perform a dilute ascent for closure of the CM mass flux
+!                based on an entraining plume a la Raymond and Blythe (1992)
+!
+! Author: Byron Boville, from code in tphysbc
+!
+!---------------------------------------------------------------------------------
+  use shr_kind_mod,    only: r8 => shr_kind_r8
+  use physconst,       only: cpair, epsilo, gravit, latice, latvap, tmelt, rair, &
+                             cpwv, cpliq, rh2o
 
-    rl = latvap
-    rgas = rair 
-    grav = gravit 
-    cpres = cpair 
-    tpert = 0.0
-    pblt = 30
-    msg = 1
+  implicit none
 
-    !status =NF90_OPEN("continuous_at_goamazon.nc",NF90_NOWRITE,NCID )
-    !status =NF90_OPEN("Arm_CF_1999_2009_uniform.nc",NF90_NOWRITE,NCID )
-    status =NF90_OPEN("goamazon_2014_2015.nc",NF90_NOWRITE,NCID )
-    !status =NF90_OPEN("mao_IOP1_20140201.nc",NF90_NOWRITE,NCID )
+  save
+  private                         ! Make default type private to the module
+!
+  public buoyan
+  public buoyan_dilute
+  public buoyan_dilute_1
+  public zm_convi
+!
+! Private data
+!
+   real(r8), parameter :: unset_r8 = huge(1.0_r8)
+   real(r8) :: zmconv_c0_lnd = unset_r8    
+   real(r8) :: zmconv_c0_ocn = unset_r8    
+   real(r8) :: zmconv_ke     = unset_r8    
 
-    status = NF90_INQ_DIMID( ncid, 'lev', dimID )
-    status = nf90_inquire_dimension( ncid, dimID, len=nlevOBS )
-    status = NF90_INQ_DIMID( ncid, 'time', dimID )
-    status = nf90_inquire_dimension( ncid, dimID, len=ntimeOBS )
+   real(r8) rl         ! wg latent heat of vaporization.
+   real(r8) cpres      ! specific heat at constant pressure in j/kg-degk.
+   real(r8), parameter :: capelmt = 70._r8  ! threshold value for cape for deep convection.
+   real(r8) :: ke           ! Tunable evaporation efficiency set from namelist input zmconv_ke
+   real(r8) :: c0_lnd       ! set from namelist input zmconv_c0_lnd
+   real(r8) :: c0_ocn       ! set from namelist input zmconv_c0_ocn
+   real(r8) tau   ! convective time scale
+   real(r8),parameter :: c1 = 6.112_r8
+   real(r8),parameter :: c2 = 17.67_r8
+   real(r8),parameter :: c3 = 243.5_r8
+   real(r8) :: tfreez
+   real(r8) :: eps1
+   integer, parameter :: pcols = 1
+   integer, parameter :: pver = 40
+   integer, parameter :: pverp = 40
+      
 
-    allocate(tmp_1d(nlevOBS))
-    allocate(levOBS(nlevOBS))
-    allocate(pfOBS(nlevOBS+1))
-    allocate(psOBS(ntimeOBS))
-    allocate(capeOBS(ntimeOBS))
-    allocate(mxOBS(ntimeOBS))
-    allocate(tmp_2d(nlevOBS,ntimeOBS))
-    allocate(qOBS(nlevOBS,ntimeOBS))
-    allocate(sqOBS(nlevOBS,ntimeOBS))
-    allocate(tOBS(nlevOBS,ntimeOBS))
-    allocate(divtHOBS(nlevOBS,ntimeOBS))
-    allocate(divqHOBS(nlevOBS,ntimeOBS))
-    allocate(divtVOBS(nlevOBS,ntimeOBS))
-    allocate(divqVOBS(nlevOBS,ntimeOBS))
-    allocate(zOBS(nlevOBS,ntimeOBS))
+   logical :: no_deep_pbl ! default = .false.
+                          ! no_deep_pbl = .true. eliminates deep convection entirely within PBL 
+   
 
-    !lev
-    status = nf90_inq_varid( ncid, 'lev', varid ) !mb
-    status = nf90_get_var (ncid, varid, tmp_1d)
-    levOBS = tmp_1d(nlevOBS:1:-1)
+!moved from moistconvection.F90
+   real(r8) :: rgrav       ! reciprocal of grav
+   real(r8) :: rgas        ! gas constant for dry air
+   real(r8) :: grav        ! = gravit
+   real(r8) :: cp          ! = cpres = cpair
+   
+   integer  limcnv       ! top interface level limit for convection
 
-    !surface pressure
-    status = nf90_inq_varid( ncid, 'p_srf_aver', varid) !mb
-    status = nf90_get_var (ncid, varid, psOBS)
+   real(r8),parameter ::  tiedke_add = 0.5_r8   
+   !real(r8),parameter ::  tiedke_add = 0.0_r8
 
-    !mixing ratio to specific humidity
-    status = nf90_inq_varid( ncid, 'q', varid   ) !g/kg
-    status = nf90_get_var (ncid, varid, tmp_2d)
-    qOBS = tmp_2d(nlevOBS:1:-1, :) / 1000.0
-    sqOBS = qOBS / (qOBS + 1)
+contains
 
-    !temperature
-    status = nf90_inq_varid( ncid, 'T', varid   ) !K
-    status = nf90_get_var (ncid, varid, tmp_2d)
-    tOBS = tmp_2d(nlevOBS:1:-1, :)
-
-    !horizontal q adv
-    status = nf90_inq_varid( ncid, 'q_adv_h', varid   ) !g/kg/hour
-    status = nf90_get_var (ncid, varid, tmp_2d)
-    divqHOBS = tmp_2d(nlevOBS:1:-1,:) / 3600.0 / 1000.0
-
-    !horizontal t adv
-    status = nf90_inq_varid( ncid, 'T_adv_h', varid   ) !K/hour
-    status = nf90_get_var (ncid, varid, tmp_2d)
-    divtHOBS = tmp_2d(nlevOBS:1:-1,:) / 3600.0
-
-    !vertical q adv
-    status = nf90_inq_varid( ncid, 'q_adv_v', varid   ) !g/kg/hour
-    status = nf90_get_var (ncid, varid, tmp_2d)
-    divqVOBS = tmp_2d(nlevOBS:1:-1,:) / 3600.0 / 1000.0
-
-    !vertical t adv
-    status = nf90_inq_varid( ncid, 'T_adv_v', varid   ) !K/hour
-    status = nf90_get_var (ncid, varid, tmp_2d)
-    divtVOBS = tmp_2d(nlevOBS:1:-1,:) / 3600.0
-
-    !z
-    do j=1, ntimeobs
-    do i=1, nlevobs
-       !zOBS(i,1) = 288/6.5 * (1 - (levOBS(i)/1013.25) ** (0.287 * 6.5/9.8)) * 1000.0
-       zOBS(i,j) = tOBS(nlevobs-1,j)/6.5 * (1 - (levOBS(i)/psOBS(j)) ** (0.287 * 6.5/9.8)) * 1000.0
-       !zOBS(i,1) = 287.05 * tOBS(i,1) / 9.8 * log(psOBS(1)/levobs(i))
-    end do
-    end do
-
-    !pf
-    do i=1, nlevobs
-       pfOBS(i) = levOBS(i) - 12.5
-    end do
-    pfOBS(nlevobs+1) = levOBS(nlevobs) + 12.5
+!=========================================================================================
+ subroutine zm_convi()
 
 
-    !print debug
-    write(*,*)"debug p_obs"
-    write(*,*)levOBS
-    write(*,*)"debug z_obs"
-    write(*,*)zOBS(:,3)
-    write(*,*)"debug t_obs"
-    write(*,*)tOBS(:,3)
-    write(*,*)"debug q_obs"
-    write(*,*)qOBS(:,3)
+     ! Initialization of ZM constants
+     tfreez = tmelt
+     eps1   = epsilo
+     rl     = latvap
+     cpres  = cpair
+     rgrav  = 1.0_r8/gravit
+     rgas   = rair
+     grav   = gravit
+     cp     = cpres
+end subroutine zm_convi
 
-    do i=1,ntimeobs
-       call buoyan_dilute(1   ,1    , &
-                    qOBS(1:nlevobs,i),tOBS(1:nlevobs, i),levOBS(1:nlevobs),zOBS(1:nlevobs,i),pfOBS(1:nlevobs+1)       , &
-                    tp      ,qstp    ,tl      ,rl      ,cape     , &
-                    pblt    ,lcl     ,lel     ,lon     ,maxi     , &
-                    rgas    ,grav    ,cpres   ,msg     , &
-                    tpert   )
-        capeOBS(i) = cape(1)
-        mxOBS(i) = maxi(1)
-     end do
 
-     open(1001, file="goamazon_cape.txt")
-     do i=1, ntimeobs
-        write(1001,"(F16.4)") capeOBS(i)
-     end do
-     close(1001)
+subroutine buoyan(lchnk   ,ncol    , &
+                  q       ,t       ,p       ,z       ,pf      , &
+                  tp      ,qstp    ,tl      ,rl      ,cape    , &
+                  pblt    ,lcl     ,lel     ,lon     ,mx      , &
+                  rd      ,grav    ,cp      ,msg     , &
+                  tpert   )
+!----------------------------------------------------------------------- 
+! 
+! Purpose: 
+! <Say what the routine does> 
+! 
+! Method: 
+! <Describe the algorithm(s) used in the routine.> 
+! <Also include any applicable external references.> 
+! 
+! Author:
+! This is contributed code not fully standardized by the CCM core group.
+! The documentation has been enhanced to the degree that we are able.
+! Reviewed:          P. Rasch, April 1996
+! 
+!-----------------------------------------------------------------------
+   implicit none
+!-----------------------------------------------------------------------
+!
+! input arguments
+!
+   integer, intent(in) :: lchnk                 ! chunk identifier
+   integer, intent(in) :: ncol                  ! number of atmospheric columns
 
-    do i=1,ntimeobs
-    do j=1,nlevobs
-       qobs(j,i) = qobs(j,i) + (divqHobs(j,i) + divqVobs(j,i)) * 3600.0 
-       tobs(j,i) = tobs(j,i) + (divtHobs(j,i) - divtVobs(j,i)) * 3600.0 
-       if (qobs(j,i) < 0) then
-           qobs(j,i) = 1.0e-12
-       end if
-    end do
-    end do
+   real(r8), intent(in) :: q(pcols,pver)        ! spec. humidity
+   real(r8), intent(in) :: t(pcols,pver)        ! temperature
+   real(r8), intent(in) :: p(pcols,pver)        ! pressure
+   real(r8), intent(in) :: z(pcols,pver)        ! height
+   real(r8), intent(in) :: pf(pcols,pver+1)     ! pressure at interfaces
+   real(r8), intent(in) :: pblt(pcols)          ! index of pbl depth
+   real(r8), intent(in) :: tpert(pcols)         ! perturbation temperature by pbl processes
 
-    do i=1,ntimeobs
-       maxi = mxobs(i)
-       call buoyan_dilute_1(1   ,1    , &
-                    qOBS(1:nlevobs,i),tOBS(1:nlevobs, i),levOBS(1:nlevobs),zOBS(1:nlevobs,i),pfOBS(1:nlevobs+1)       , &
-                    tp      ,qstp    ,tl      ,rl      ,cape     , &
-                    pblt    ,lcl     ,lel     ,lon     ,maxi     , &
-                    rgas    ,grav    ,cpres   ,msg     , &
-                    tpert   )
-        capeOBS(i) = (cape(1) - capeOBS(i)) / 3.0
-     end do
-     open(1001, file="goamazon_dcape.txt")
-     do i=1, ntimeobs
-        write(1001,"(F16.4)") capeOBS(i)
-     end do
-     close(1001)
-end program cape_calc
+!
+! output arguments
+!
+   real(r8), intent(out) :: tp(pcols,pver)       ! parcel temperature
+   real(r8), intent(out) :: qstp(pcols,pver)     ! saturation mixing ratio of parcel
+   real(r8), intent(out) :: tl(pcols)            ! parcel temperature at lcl
+   real(r8), intent(out) :: cape(pcols)          ! convective aval. pot. energy.
+   integer lcl(pcols)        !
+   integer lel(pcols)        !
+   integer lon(pcols)        ! level of onset of deep convection
+   integer mx(pcols)         ! level of max moist static energy
+!
+!--------------------------Local Variables------------------------------
+!
+   real(r8) capeten(pcols,5)     ! provisional value of cape
+   real(r8) tv(pcols,pver)       !
+   real(r8) tpv(pcols,pver)      !
+   real(r8) buoy(pcols,pver)
+
+   real(r8) a1(pcols)
+   real(r8) a2(pcols)
+   real(r8) estp(pcols)
+   real(r8) pl(pcols)
+   real(r8) plexp(pcols)
+   real(r8) hmax(pcols)
+   real(r8) hmn(pcols)
+   real(r8) y(pcols)
+
+   logical plge600(pcols)
+   integer knt(pcols)
+   integer lelten(pcols,5)
+
+   real(r8) cp
+   real(r8) e
+   real(r8) grav
+
+   integer i
+   integer k
+   integer msg
+   integer n
+
+   real(r8) rd
+   real(r8) rl
+#ifdef PERGRO
+   real(r8) rhd
+#endif
+!
+!-----------------------------------------------------------------------
+!
+    eps1 = 0.622
+
+   do n = 1,5
+      do i = 1,ncol
+         lelten(i,n) = pver
+         capeten(i,n) = 0._r8
+      end do
+   end do
+!
+   do i = 1,ncol
+      lon(i) = pver
+      knt(i) = 0
+      lel(i) = pver
+      mx(i) = lon(i)
+      cape(i) = 0._r8
+      hmax(i) = 0._r8
+   end do
+
+
+
+   tp(:ncol,:) = t(:ncol,:)
+   qstp(:ncol,:) = q(:ncol,:)
+
+!!! RBN - Initialize tv and buoy for output.
+!!! tv=tv : tpv=tpv : qstp=q : buoy=0.
+   tv(:ncol,:) = t(:ncol,:) *(1._r8+1.608_r8*q(:ncol,:))/ (1._r8+q(:ncol,:))
+   tpv(:ncol,:) = tv(:ncol,:)
+   buoy(:ncol,:) = 0._r8
+
+!
+! set "launching" level(mx) to be at maximum moist static energy.
+! search for this level stops at planetary boundary layer top.
+!
+#ifdef PERGRO
+   do k = pver,msg + 1,-1
+      do i = 1,ncol
+         hmn(i) = cp*t(i,k) + grav*z(i,k) + rl*q(i,k)
+!
+! Reset max moist static energy level when relative difference exceeds 1.e-4
+!
+         rhd = (hmn(i) - hmax(i))/(hmn(i) + hmax(i))
+         if (k >= nint(pblt(i)) .and. k <= lon(i) .and. rhd > -1.e-4_r8) then
+            hmax(i) = hmn(i)
+            mx(i) = k
+         end if
+      end do
+   end do
+#else
+   do k = pver,msg + 1,-1
+      do i = 1,ncol
+         hmn(i) = cp*t(i,k) + grav*z(i,k) + rl*q(i,k)
+         if (k >= nint(pblt(i)) .and. k <= lon(i) .and. hmn(i) > hmax(i)) then
+            hmax(i) = hmn(i)
+            mx(i) = k
+         end if
+      end do
+   end do
+#endif
+!
+   do i = 1,ncol
+      lcl(i) = mx(i)
+      e = p(i,mx(i))*q(i,mx(i))/ (eps1+q(i,mx(i)))
+      tl(i) = 2840._r8/ (3.5_r8*log(t(i,mx(i)))-log(e)-4.805_r8) + 55._r8
+      if (tl(i) < t(i,mx(i))) then
+         plexp(i) = (1._r8/ (0.2854_r8* (1._r8-0.28_r8*q(i,mx(i)))))
+         pl(i) = p(i,mx(i))* (tl(i)/t(i,mx(i)))**plexp(i)
+      else
+         tl(i) = t(i,mx(i))
+         pl(i) = p(i,mx(i))
+      end if
+   end do
+
+!
+! calculate lifting condensation level (lcl).
+!
+   do k = pver,msg + 2,-1
+      do i = 1,ncol
+         if (k <= mx(i) .and. (p(i,k) > pl(i) .and. p(i,k-1) <= pl(i))) then
+            lcl(i) = k - 1
+         end if
+      end do
+   end do
+!
+! if lcl is above the nominal level of non-divergence (600 mbs),
+! no deep convection is permitted (ensuing calculations
+! skipped and cape retains initialized value of zero).
+!
+   do i = 1,ncol
+      plge600(i) = pl(i).ge.600._r8
+   end do
+!
+! initialize parcel properties in sub-cloud layer below lcl.
+!
+   do k = pver,msg + 1,-1
+      do i=1,ncol
+         if (k > lcl(i) .and. k <= mx(i) .and. plge600(i)) then
+            tv(i,k) = t(i,k)* (1._r8+1.608_r8*q(i,k))/ (1._r8+q(i,k))
+            qstp(i,k) = q(i,mx(i))
+            tp(i,k) = t(i,mx(i))* (p(i,k)/p(i,mx(i)))**(0.2854_r8* (1._r8-0.28_r8*q(i,mx(i))))
+!
+! buoyancy is increased by 0.5 k as in tiedtke
+!
+!-jjh          tpv (i,k)=tp(i,k)*(1.+1.608*q(i,mx(i)))/
+!-jjh     1                     (1.+q(i,mx(i)))
+            tpv(i,k) = (tp(i,k)+tpert(i))*(1._r8+1.608_r8*q(i,mx(i)))/ (1._r8+q(i,mx(i)))
+            buoy(i,k) = tpv(i,k) - tv(i,k) + tiedke_add
+         end if
+      end do
+   end do
+
+
+! define parcel properties at lcl (i.e. level immediately above pl).
+!
+   do k = pver,msg + 1,-1
+      do i=1,ncol
+         if (k == lcl(i) .and. plge600(i)) then
+            tv(i,k) = t(i,k)* (1._r8+1.608_r8*q(i,k))/ (1._r8+q(i,k))
+            qstp(i,k) = q(i,mx(i))
+            tp(i,k) = tl(i)* (p(i,k)/pl(i))**(0.2854_r8* (1._r8-0.28_r8*qstp(i,k)))
+!              estp(i)  =exp(21.656_r8 - 5418._r8/tp(i,k))
+! use of different formulas for es has about 1 g/kg difference
+! in qs at t= 300k, and 0.02 g/kg at t=263k, with the formula
+! above giving larger qs.
+            call qmmr_hPa(tp(i,k), p(i,k), estp(i), qstp(i,k))
+            a1(i) = cp / rl + qstp(i,k) * (1._r8+ qstp(i,k) / eps1) * rl * eps1 / &
+                    (rd * tp(i,k) ** 2)
+            a2(i) = .5_r8* (qstp(i,k)* (1._r8+2._r8/eps1*qstp(i,k))* &
+                    (1._r8+qstp(i,k)/eps1)*eps1**2*rl*rl/ &
+                    (rd**2*tp(i,k)**4)-qstp(i,k)* &
+                    (1._r8+qstp(i,k)/eps1)*2._r8*eps1*rl/ &
+                    (rd*tp(i,k)**3))
+            a1(i) = 1._r8/a1(i)
+            a2(i) = -a2(i)*a1(i)**3
+            y(i) = q(i,mx(i)) - qstp(i,k)
+            tp(i,k) = tp(i,k) + a1(i)*y(i) + a2(i)*y(i)**2
+            call qmmr_hPa(tp(i,k), p(i,k), estp(i), qstp(i,k))
+!
+! buoyancy is increased by 0.5 k in cape calculation.
+! dec. 9, 1994
+!-jjh          tpv(i,k) =tp(i,k)*(1.+1.608*qstp(i,k))/(1.+q(i,mx(i)))
+!
+            tpv(i,k) = (tp(i,k)+tpert(i))* (1._r8+1.608_r8*qstp(i,k)) / (1._r8+q(i,mx(i)))
+            buoy(i,k) = tpv(i,k) - tv(i,k) + tiedke_add
+         end if
+      end do
+   end do
+
+!
+! main buoyancy calculation.
+!
+   do k = pver - 1,msg + 1,-1
+      do i=1,ncol
+         if (k < lcl(i) .and. plge600(i)) then
+            tv(i,k) = t(i,k)* (1._r8+1.608_r8*q(i,k))/ (1._r8+q(i,k))
+            qstp(i,k) = qstp(i,k+1)
+            tp(i,k) = tp(i,k+1)* (p(i,k)/p(i,k+1))**(0.2854_r8* (1._r8-0.28_r8*qstp(i,k)))
+            call qmmr_hPa(tp(i,k), p(i,k), estp(i), qstp(i,k))
+            a1(i) = cp/rl + qstp(i,k)* (1._r8+qstp(i,k)/eps1)*rl*eps1/ (rd*tp(i,k)**2)
+            a2(i) = .5_r8* (qstp(i,k)* (1._r8+2._r8/eps1*qstp(i,k))* &
+                    (1._r8+qstp(i,k)/eps1)*eps1**2*rl*rl/ &
+                    (rd**2*tp(i,k)**4)-qstp(i,k)* &
+                    (1._r8+qstp(i,k)/eps1)*2._r8*eps1*rl/ &
+                    (rd*tp(i,k)**3))
+            a1(i) = 1._r8/a1(i)
+            a2(i) = -a2(i)*a1(i)**3
+            y(i) = qstp(i,k+1) - qstp(i,k)
+            tp(i,k) = tp(i,k) + a1(i)*y(i) + a2(i)*y(i)**2
+            call qmmr_hPa(tp(i,k), p(i,k), estp(i), qstp(i,k))
+!-jjh          tpv(i,k) =tp(i,k)*(1.+1.608*qstp(i,k))/
+!jt            (1.+q(i,mx(i)))
+            tpv(i,k) = (tp(i,k)+tpert(i))* (1._r8+1.608_r8*qstp(i,k))/(1._r8+q(i,mx(i)))
+            buoy(i,k) = tpv(i,k) - tv(i,k) + tiedke_add
+         end if
+      end do
+   end do
+
+   do k = msg + 2,pver
+      do i = 1,ncol
+         if (k < lcl(i) .and. plge600(i)) then
+            if (buoy(i,k+1) > 0._r8 .and. buoy(i,k) <= 0._r8) then
+               knt(i) = min(5,knt(i) + 1)
+               lelten(i,knt(i)) = k
+            end if
+         end if
+      end do
+   end do
+!
+! calculate convective available potential energy (cape).
+!
+    !write(*,*)"tpv"
+    !do i=1,40
+    !    qstp(1,i) = tpv(1,i) - tv(1,i)
+    !    write(*,*)tpv(1,i) - 273, tv(1,i), qstp(1,i)
+    !end do
+
+    !call exit(1)
+
+   do n = 1,5
+      do k = msg + 1,pver
+         do i = 1,ncol
+            if (plge600(i) .and. k <= mx(i) .and. k > lelten(i,n)) then
+               capeten(i,n) = capeten(i,n) + rd*buoy(i,k)*log(pf(i,k+1)/pf(i,k))
+            end if
+         end do
+      end do
+   end do
+!
+! find maximum cape from all possible tentative capes from
+! one sounding,
+! and use it as the final cape, april 26, 1995
+!
+   do n = 1,5
+      do i = 1,ncol
+         if (capeten(i,n) > cape(i)) then
+            cape(i) = capeten(i,n)
+            lel(i) = lelten(i,n)
+         end if
+      end do
+   end do
+!
+! put lower bound on cape for diagnostic purposes.
+!
+   do i = 1,ncol
+      cape(i) = max(cape(i), 0._r8)
+   end do
+!
+   return
+end subroutine buoyan
+
+subroutine buoyan_dilute(lchnk   ,ncol    , &
+                  q       ,t       ,p       ,z       ,pf      , &
+                  tp      ,qstp    ,tl      ,rl      ,cape    , &
+                  pblt    ,lcl     ,lel     ,lon     ,mx      , &
+                  rd      ,grav    ,cp      ,msg     , &
+                  tpert   )
+!----------------------------------------------------------------------- 
+! 
+! Purpose: 
+! Calculates CAPE the lifting condensation level and the convective top
+! where buoyancy is first -ve.
+! 
+! Method: Calculates the parcel temperature based on a simple constant
+! entraining plume model. CAPE is integrated from buoyancy.
+! 09/09/04 - Simplest approach using an assumed entrainment rate for 
+!            testing (dmpdp). 
+! 08/04/05 - Swap to convert dmpdz to dmpdp  
+!
+! SCAM Logical Switches - DILUTE:RBN - Now Disabled 
+! ---------------------
+! switch(1) = .T. - Uses the dilute parcel calculation to obtain tendencies.
+! switch(2) = .T. - Includes entropy/q changes due to condensate loss and freezing.
+! switch(3) = .T. - Adds the PBL Tpert for the parcel temperature at all levels.
+! 
+! References:
+! Raymond and Blythe (1992) JAS 
+! 
+! Author:
+! Richard Neale - September 2004
+! 
+!-----------------------------------------------------------------------
+   implicit none
+!-----------------------------------------------------------------------
+!
+! input arguments
+!
+   integer, intent(in) :: lchnk                 ! chunk identifier
+   integer, intent(in) :: ncol                  ! number of atmospheric columns
+
+   real(r8), intent(in) :: q(pcols,pver)        ! spec. humidity
+   real(r8), intent(in) :: t(pcols,pver)        ! temperature
+   real(r8), intent(in) :: p(pcols,pver)        ! pressure
+   real(r8), intent(in) :: z(pcols,pver)        ! height
+   real(r8), intent(in) :: pf(pcols,pver+1)     ! pressure at interfaces
+   real(r8), intent(in) :: pblt(pcols)          ! index of pbl depth
+   real(r8), intent(in) :: tpert(pcols)         ! perturbation temperature by pbl processes
+
+!
+! output arguments
+!
+   real(r8), intent(out) :: tp(pcols,pver)       ! parcel temperature
+   real(r8), intent(out) :: qstp(pcols,pver)     ! saturation mixing ratio of parcel (only above lcl, just q below).
+   real(r8), intent(out) :: tl(pcols)            ! parcel temperature at lcl
+   real(r8), intent(out) :: cape(pcols)          ! convective aval. pot. energy.
+   integer lcl(pcols)        !
+   integer lel(pcols)        !
+   integer lon(pcols)        ! level of onset of deep convection
+   integer mx(pcols)         ! level of max moist static energy
+!
+!--------------------------Local Variables------------------------------
+!
+   real(r8) capeten(pcols,5)     ! provisional value of cape
+   real(r8) tv(pcols,pver)       !
+   real(r8) tpv(pcols,pver)      !
+   real(r8) buoy(pcols,pver)
+
+   real(r8) a1(pcols)
+   real(r8) a2(pcols)
+   real(r8) estp(pcols)
+   real(r8) pl(pcols)
+   real(r8) plexp(pcols)
+   real(r8) hmax(pcols)
+   real(r8) hmn(pcols)
+   real(r8) y(pcols)
+
+   logical plge600(pcols)
+   integer knt(pcols)
+   integer lelten(pcols,5)
+
+   real(r8) cp
+   real(r8) e
+   real(r8) grav
+
+   integer i
+   integer k
+   integer msg
+   integer n
+
+   real(r8) rd
+   real(r8) rl
+#ifdef PERGRO
+   real(r8) rhd
+#endif
+!
+!-----------------------------------------------------------------------
+!
+   do n = 1,5
+      do i = 1,ncol
+         lelten(i,n) = pver
+         capeten(i,n) = 0._r8
+      end do
+   end do
+!
+   do i = 1,ncol
+      lon(i) = pver
+      knt(i) = 0
+      lel(i) = pver
+      mx(i) = lon(i)
+      cape(i) = 0._r8
+      hmax(i) = 0._r8
+   end do
+
+   tp(:ncol,:) = t(:ncol,:)
+   qstp(:ncol,:) = q(:ncol,:)
+
+!!! RBN - Initialize tv and buoy for output.
+!!! tv=tv : tpv=tpv : qstp=q : buoy=0.
+   tv(:ncol,:) = t(:ncol,:) *(1._r8+1.608_r8*q(:ncol,:))/ (1._r8+q(:ncol,:))
+   tpv(:ncol,:) = tv(:ncol,:)
+   buoy(:ncol,:) = 0._r8
+
+!
+! set "launching" level(mx) to be at maximum moist static energy.
+! search for this level stops at planetary boundary layer top.
+!
+#ifdef PERGRO
+   do k = pver,msg + 1,-1
+      do i = 1,ncol
+         hmn(i) = cp*t(i,k) + grav*z(i,k) + rl*q(i,k)
+!
+! Reset max moist static energy level when relative difference exceeds 1.e-4
+!
+         rhd = (hmn(i) - hmax(i))/(hmn(i) + hmax(i))
+         if (k >= nint(pblt(i)) .and. k <= lon(i) .and. rhd > -1.e-4_r8) then
+            hmax(i) = hmn(i)
+            mx(i) = k
+         end if
+      end do
+   end do
+#else
+   do k = pver,msg + 1,-1
+      do i = 1,ncol
+         hmn(i) = cp*t(i,k) + grav*z(i,k) + rl*q(i,k)
+         if (k >= nint(pblt(i)) .and. k <= lon(i) .and. hmn(i) > hmax(i)) then
+            hmax(i) = hmn(i)
+            mx(i) = k
+         end if
+      end do
+   end do
+#endif
+
+! LCL dilute calculation - initialize to mx(i)
+! Determine lcl in parcel_dilute and get pl,tl after parcel_dilute
+! Original code actually sets LCL as level above wher condensate forms.
+! Therefore in parcel_dilute lcl(i) will be at first level where qsmix < qtmix.
+
+   do i = 1,ncol ! Initialise LCL variables.
+      lcl(i) = mx(i)
+      tl(i) = t(i,mx(i))
+      pl(i) = p(i,mx(i))
+   end do
+
+!
+! main buoyancy calculation.
+!
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+!!! DILUTE PLUME CALCULATION USING ENTRAINING PLUME !!!
+!!!   RBN 9/9/04   !!!
+
+   call parcel_dilute(lchnk, ncol, msg, mx, p, t, q, tpert, tp, tpv, qstp, pl, tl, lcl)
+
+! If lcl is above the nominal level of non-divergence (600 mbs),
+! no deep convection is permitted (ensuing calculations
+! skipped and cape retains initialized value of zero).
+!
+   do i = 1,ncol
+      plge600(i) = pl(i).ge.600._r8 ! Just change to always allow buoy calculation.
+   end do
+
+!
+! Main buoyancy calculation.
+!
+   do k = pver,msg + 1,-1
+      do i=1,ncol
+         if (k <= mx(i) .and. plge600(i)) then   ! Define buoy from launch level to cloud top.
+            tv(i,k) = t(i,k)* (1._r8+1.608_r8*q(i,k))/ (1._r8+q(i,k))
+            buoy(i,k) = tpv(i,k) - tv(i,k) + tiedke_add  ! +0.5K or not?
+         else
+            qstp(i,k) = q(i,k)
+            tp(i,k)   = t(i,k)            
+            tpv(i,k)  = tv(i,k)
+         endif
+      end do
+   end do
+
+!-------------------------------------------------------------------------------
+
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+
+
+!
+   do k = msg + 2,pver
+      do i = 1,ncol
+         if (k < lcl(i) .and. plge600(i)) then
+            if (buoy(i,k+1) > 0._r8 .and. buoy(i,k) <= 0._r8) then
+               knt(i) = min(5,knt(i) + 1)
+               lelten(i,knt(i)) = k
+            end if
+         end if
+      end do
+   end do
+!
+! calculate convective available potential energy (cape).
+!
+   do n = 1,5
+      do k = msg + 1,pver
+         do i = 1,ncol
+            if (plge600(i) .and. k <= mx(i) .and. k > lelten(i,n)) then
+               capeten(i,n) = capeten(i,n) + rd*buoy(i,k)*log(pf(i,k+1)/pf(i,k))
+            end if
+         end do
+      end do
+   end do
+!
+! find maximum cape from all possible tentative capes from
+! one sounding,
+! and use it as the final cape, april 26, 1995
+!
+   do n = 1,5
+      do i = 1,ncol
+         if (capeten(i,n) > cape(i)) then
+            cape(i) = capeten(i,n)
+            lel(i) = lelten(i,n)
+         end if
+      end do
+   end do
+!
+! put lower bound on cape for diagnostic purposes.
+!
+   do i = 1,ncol
+      cape(i) = max(cape(i), 0._r8)
+   end do
+!
+   return
+end subroutine buoyan_dilute
+
+
+subroutine buoyan_dilute_1(lchnk   ,ncol    , &
+                  q       ,t       ,p       ,z       ,pf      , &
+                  tp      ,qstp    ,tl      ,rl      ,cape    , &
+                  pblt    ,lcl     ,lel     ,lon     ,mx      , &
+                  rd      ,grav    ,cp      ,msg     , &
+                  tpert   )
+!----------------------------------------------------------------------- 
+! 
+! Purpose: 
+! Calculates CAPE the lifting condensation level and the convective top
+! where buoyancy is first -ve.
+! 
+! Method: Calculates the parcel temperature based on a simple constant
+! entraining plume model. CAPE is integrated from buoyancy.
+! 09/09/04 - Simplest approach using an assumed entrainment rate for 
+!            testing (dmpdp). 
+! 08/04/05 - Swap to convert dmpdz to dmpdp  
+!
+! SCAM Logical Switches - DILUTE:RBN - Now Disabled 
+! ---------------------
+! switch(1) = .T. - Uses the dilute parcel calculation to obtain tendencies.
+! switch(2) = .T. - Includes entropy/q changes due to condensate loss and freezing.
+! switch(3) = .T. - Adds the PBL Tpert for the parcel temperature at all levels.
+! 
+! References:
+! Raymond and Blythe (1992) JAS 
+! 
+! Author:
+! Richard Neale - September 2004
+! 
+!-----------------------------------------------------------------------
+   implicit none
+!-----------------------------------------------------------------------
+!
+! input arguments
+!
+   integer, intent(in) :: lchnk                 ! chunk identifier
+   integer, intent(in) :: ncol                  ! number of atmospheric columns
+
+   real(r8), intent(in) :: q(pcols,pver)        ! spec. humidity
+   real(r8), intent(in) :: t(pcols,pver)        ! temperature
+   real(r8), intent(in) :: p(pcols,pver)        ! pressure
+   real(r8), intent(in) :: z(pcols,pver)        ! height
+   real(r8), intent(in) :: pf(pcols,pver+1)     ! pressure at interfaces
+   real(r8), intent(in) :: pblt(pcols)          ! index of pbl depth
+   real(r8), intent(in) :: tpert(pcols)         ! perturbation temperature by pbl processes
+
+!
+! output arguments
+!
+   real(r8), intent(out) :: tp(pcols,pver)       ! parcel temperature
+   real(r8), intent(out) :: qstp(pcols,pver)     ! saturation mixing ratio of parcel (only above lcl, just q below).
+   real(r8), intent(out) :: tl(pcols)            ! parcel temperature at lcl
+   real(r8), intent(out) :: cape(pcols)          ! convective aval. pot. energy.
+   integer lcl(pcols)        !
+   integer lel(pcols)        !
+   integer lon(pcols)        ! level of onset of deep convection
+   integer, intent(in) ::  mx(pcols)         ! level of max moist static energy
+!
+!--------------------------Local Variables------------------------------
+!
+   real(r8) capeten(pcols,5)     ! provisional value of cape
+   real(r8) tv(pcols,pver)       !
+   real(r8) tpv(pcols,pver)      !
+   real(r8) buoy(pcols,pver)
+
+   real(r8) a1(pcols)
+   real(r8) a2(pcols)
+   real(r8) estp(pcols)
+   real(r8) pl(pcols)
+   real(r8) plexp(pcols)
+   real(r8) hmax(pcols)
+   real(r8) hmn(pcols)
+   real(r8) y(pcols)
+
+   logical plge600(pcols)
+   integer knt(pcols)
+   integer lelten(pcols,5)
+
+   real(r8) cp
+   real(r8) e
+   real(r8) grav
+
+   integer i
+   integer k
+   integer msg
+   integer n
+
+   real(r8) rd
+   real(r8) rl
+#ifdef PERGRO
+   real(r8) rhd
+#endif
+!
+!-----------------------------------------------------------------------
+!
+   do n = 1,5
+      do i = 1,ncol
+         lelten(i,n) = pver
+         capeten(i,n) = 0._r8
+      end do
+   end do
+!
+   do i = 1,ncol
+      lon(i) = pver
+      knt(i) = 0
+      lel(i) = pver
+      !mx(i) = lon(i)
+      cape(i) = 0._r8
+      hmax(i) = 0._r8
+   end do
+
+   tp(:ncol,:) = t(:ncol,:)
+   qstp(:ncol,:) = q(:ncol,:)
+
+!!! RBN - Initialize tv and buoy for output.
+!!! tv=tv : tpv=tpv : qstp=q : buoy=0.
+   tv(:ncol,:) = t(:ncol,:) *(1._r8+1.608_r8*q(:ncol,:))/ (1._r8+q(:ncol,:))
+   tpv(:ncol,:) = tv(:ncol,:)
+   buoy(:ncol,:) = 0._r8
+
+!
+! set "launching" level(mx) to be at maximum moist static energy.
+! search for this level stops at planetary boundary layer top.
+!
+#ifdef PERGRO
+   do k = pver,msg + 1,-1
+      do i = 1,ncol
+         hmn(i) = cp*t(i,k) + grav*z(i,k) + rl*q(i,k)
+!
+! Reset max moist static energy level when relative difference exceeds 1.e-4
+!
+         rhd = (hmn(i) - hmax(i))/(hmn(i) + hmax(i))
+         if (k >= nint(pblt(i)) .and. k <= lon(i) .and. rhd > -1.e-4_r8) then
+            hmax(i) = hmn(i)
+            !mx(i) = k
+         end if
+      end do
+   end do
+#else
+   do k = pver,msg + 1,-1
+      do i = 1,ncol
+         hmn(i) = cp*t(i,k) + grav*z(i,k) + rl*q(i,k)
+         if (k >= nint(pblt(i)) .and. k <= lon(i) .and. hmn(i) > hmax(i)) then
+            hmax(i) = hmn(i)
+            !mx(i) = k
+         end if
+      end do
+   end do
+#endif
+
+! LCL dilute calculation - initialize to mx(i)
+! Determine lcl in parcel_dilute and get pl,tl after parcel_dilute
+! Original code actually sets LCL as level above wher condensate forms.
+! Therefore in parcel_dilute lcl(i) will be at first level where qsmix < qtmix.
+
+   do i = 1,ncol ! Initialise LCL variables.
+      lcl(i) = mx(i)
+      tl(i) = t(i,mx(i))
+      pl(i) = p(i,mx(i))
+   end do
+
+!
+! main buoyancy calculation.
+!
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+!!! DILUTE PLUME CALCULATION USING ENTRAINING PLUME !!!
+!!!   RBN 9/9/04   !!!
+
+   call parcel_dilute(lchnk, ncol, msg, mx, p, t, q, tpert, tp, tpv, qstp, pl, tl, lcl)
+
+
+! If lcl is above the nominal level of non-divergence (600 mbs),
+! no deep convection is permitted (ensuing calculations
+! skipped and cape retains initialized value of zero).
+!
+   do i = 1,ncol
+      plge600(i) = pl(i).ge.600._r8 ! Just change to always allow buoy calculation.
+   end do
+
+!
+! Main buoyancy calculation.
+!
+   do k = pver,msg + 1,-1
+      do i=1,ncol
+         if (k <= mx(i) .and. plge600(i)) then   ! Define buoy from launch level to cloud top.
+            tv(i,k) = t(i,k)* (1._r8+1.608_r8*q(i,k))/ (1._r8+q(i,k))
+            buoy(i,k) = tpv(i,k) - tv(i,k) + tiedke_add  ! +0.5K or not?
+         else
+            qstp(i,k) = q(i,k)
+            tp(i,k)   = t(i,k)            
+            tpv(i,k)  = tv(i,k)
+         endif
+      end do
+   end do
+
+!-------------------------------------------------------------------------------
+
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+
+
+!
+   do k = msg + 2,pver
+      do i = 1,ncol
+         if (k < lcl(i) .and. plge600(i)) then
+            if (buoy(i,k+1) > 0._r8 .and. buoy(i,k) <= 0._r8) then
+               knt(i) = min(5,knt(i) + 1)
+               lelten(i,knt(i)) = k
+            end if
+         end if
+      end do
+   end do
+!
+! calculate convective available potential energy (cape).
+!
+   do n = 1,5
+      do k = msg + 1,pver
+         do i = 1,ncol
+            if (plge600(i) .and. k <= mx(i) .and. k > lelten(i,n)) then
+               capeten(i,n) = capeten(i,n) + rd*buoy(i,k)*log(pf(i,k+1)/pf(i,k))
+            end if
+         end do
+      end do
+   end do
+!
+! find maximum cape from all possible tentative capes from
+! one sounding,
+! and use it as the final cape, april 26, 1995
+!
+   do n = 1,5
+      do i = 1,ncol
+         if (capeten(i,n) > cape(i)) then
+            cape(i) = capeten(i,n)
+            lel(i) = lelten(i,n)
+         end if
+      end do
+   end do
+!
+! put lower bound on cape for diagnostic purposes.
+!
+   do i = 1,ncol
+      cape(i) = max(cape(i), 0._r8)
+   end do
+!
+   return
+end subroutine buoyan_dilute_1
+
+subroutine parcel_dilute (lchnk, ncol, msg, klaunch, p, t, q, tpert, tp, tpv, qstp, pl, tl, lcl)
+
+! Routine  to determine 
+!   1. Tp   - Parcel temperature
+!   2. qstp - Saturated mixing ratio at the parcel temperature.
+
+!--------------------
+implicit none
+!--------------------
+
+integer, intent(in) :: lchnk
+integer, intent(in) :: ncol
+integer, intent(in) :: msg
+
+integer, intent(in), dimension(pcols) :: klaunch(pcols)
+
+real(r8), intent(in), dimension(pcols,pver) :: p
+real(r8), intent(in), dimension(pcols,pver) :: t
+real(r8), intent(in), dimension(pcols,pver) :: q
+real(r8), intent(in), dimension(pcols) :: tpert ! PBL temperature perturbation.
+
+real(r8), intent(inout), dimension(pcols,pver) :: tp    ! Parcel temp.
+real(r8), intent(inout), dimension(pcols,pver) :: qstp  ! Parcel water vapour (sat value above lcl).
+real(r8), intent(inout), dimension(pcols) :: tl         ! Actual temp of LCL.
+real(r8), intent(inout), dimension(pcols) :: pl          ! Actual pressure of LCL. 
+
+integer, intent(inout), dimension(pcols) :: lcl ! Lifting condesation level (first model level with saturation).
+
+real(r8), intent(out), dimension(pcols,pver) :: tpv   ! Define tpv within this routine.
+
+!--------------------
+
+! Have to be careful as s is also dry static energy.
+
+
+! If we are to retain the fact that CAM loops over grid-points in the internal
+! loop then we need to dimension sp,atp,mp,xsh2o with ncol.
+
+
+real(r8) tmix(pcols,pver)        ! Tempertaure of the entraining parcel.
+real(r8) qtmix(pcols,pver)       ! Total water of the entraining parcel.
+real(r8) qsmix(pcols,pver)       ! Saturated mixing ratio at the tmix.
+real(r8) smix(pcols,pver)        ! Entropy of the entraining parcel.
+real(r8) xsh2o(pcols,pver)       ! Precipitate lost from parcel.
+real(r8) ds_xsh2o(pcols,pver)    ! Entropy change due to loss of condensate.
+real(r8) ds_freeze(pcols,pver)   ! Entropy change sue to freezing of precip.
+
+real(r8) mp(pcols)    ! Parcel mass flux.
+real(r8) qtp(pcols)   ! Parcel total water.
+real(r8) sp(pcols)    ! Parcel entropy.
+
+real(r8) sp0(pcols)    ! Parcel launch entropy.
+real(r8) qtp0(pcols)   ! Parcel launch total water.
+real(r8) mp0(pcols)    ! Parcel launch relative mass flux.
+
+real(r8) lwmax      ! Maximum condesate that can be held in cloud before rainout.
+real(r8) dmpdp      ! Parcel fractional mass entrainment rate (/mb).
+!real(r8) dmpdpc     ! In cloud parcel mass entrainment rate (/mb).
+real(r8) dmpdz      ! Parcel fractional mass entrainment rate (/m)
+real(r8) dpdz,dzdp  ! Hydrstatic relation and inverse of.
+real(r8) senv       ! Environmental entropy at each grid point.
+real(r8) qtenv      ! Environmental total water "   "   ".
+real(r8) penv       ! Environmental total pressure "   "   ".
+real(r8) tenv       ! Environmental total temperature "   "   ".
+real(r8) new_s      ! Hold value for entropy after condensation/freezing adjustments.
+real(r8) new_q      ! Hold value for total water after condensation/freezing adjustments.
+real(r8) dp         ! Layer thickness (center to center)
+real(r8) tfguess    ! First guess for entropy inversion - crucial for efficiency!
+real(r8) tscool     ! Super cooled temperature offset (in degC) (eg -35).
+
+real(r8) qxsk, qxskp1        ! LCL excess water (k, k+1)
+real(r8) dsdp, dqtdp, dqxsdp ! LCL s, qt, p gradients (k, k+1)
+real(r8) slcl,qtlcl,qslcl    ! LCL s, qt, qs values.
+
+integer rcall       ! Number of ientropy call for errors recording
+integer nit_lheat     ! Number of iterations for condensation/freezing loop.
+integer i,k,ii   ! Loop counters.
+
+!======================================================================
+!    SUMMARY
+!
+!  9/9/04 - Assumes parcel is initiated from level of maxh (klaunch)
+!           and entrains at each level with a specified entrainment rate.
+!
+! 15/9/04 - Calculates lcl(i) based on k where qsmix is first < qtmix.          
+!
+!======================================================================
+!
+! Set some values that may be changed frequently.
+!
+
+nit_lheat = 2 ! iterations for ds,dq changes from condensation freezing.
+!dmpdz=-0.25e-3_r8        ! Entrainment rate. (-ve for /m)
+!dmpdz=-0.5e-3_r8        ! Entrainment rate. (-ve for /m)
+!dmpdz=-0.75e-3_r8        ! Entrainment rate. (-ve for /m)
+!dmpdz=-1.0e-3_r8        ! Entrainment rate. (-ve for /m)
+!dmpdz=-1.25e-3_r8        ! Entrainment rate. (-ve for /m)
+!dmpdz=-1.5e-3_r8        ! Entrainment rate. (-ve for /m)
+!dmpdz=-1.75e-3_r8        ! Entrainment rate. (-ve for /m)
+!dmpdz=-2.0e-3_r8        ! Entrainment rate. (-ve for /m)
+!dmpdz=-2.25e-3_r8        ! Entrainment rate. (-ve for /m)
+!dmpdz=-2.5e-3_r8        ! Entrainment rate. (-ve for /m)
+!dmpdz=-2.75e-3_r8        ! Entrainment rate. (-ve for /m)
+!dmpdz=-3.0e-3_r8        ! Entrainment rate. (-ve for /m)
+!dmpdz=-3.25e-3_r8        ! Entrainment rate. (-ve for /m)
+!dmpdz=-3.5e-3_r8        ! Entrainment rate. (-ve for /m)
+!dmpdz=-3.75e-3_r8        ! Entrainment rate. (-ve for /m)
+!dmpdz=-4.0e-3_r8        ! Entrainment rate. (-ve for /m)
+!dmpdz=-4.25e-3_r8        ! Entrainment rate. (-ve for /m)
+!dmpdz=-4.5e-3_r8        ! Entrainment rate. (-ve for /m)
+!dmpdz=-4.75e-3_r8        ! Entrainment rate. (-ve for /m)
+dmpdz=-5.0e-3_r8        ! Entrainment rate. (-ve for /m)
+!dmpdz=1.25e-3_r8        ! Entrainment rate. (-ve for /m)
+!dmpdz=0.0        ! Entrainment rate. (-ve for /m)
+!dmpdpc = 3.e-2_r8   ! In cloud entrainment rate (/mb).
+lwmax = 1.e-3_r8    ! Need to put formula in for this.
+tscool = 0.0_r8   ! Temp at which water loading freezes in the cloud.
+
+qtmix=0._r8
+smix=0._r8
+
+qtenv = 0._r8
+senv = 0._r8
+!dmpdz=0.0        ! Entrainment rate. (-ve for /m)
+!dmpdpc = 3.e-2_r8   ! In cloud entrainment rate (/mb).
+lwmax = 1.e-3_r8    ! Need to put formula in for this.
+tscool = 0.0_r8   ! Temp at which water loading freezes in the cloud.
+
+qtmix=0._r8
+smix=0._r8
+
+qtenv = 0._r8
+senv = 0._r8
+tenv = 0._r8
+penv = 0._r8
+
+qtp0 = 0._r8
+sp0  = 0._r8
+mp0 = 0._r8
+
+qtp = 0._r8
+sp = 0._r8
+mp = 0._r8
+
+new_q = 0._r8
+new_s = 0._r8
+
+! **** Begin loops ****
+
+do k = pver, msg+1, -1
+   do i=1,ncol 
+
+! Initialize parcel values at launch level.
+
+      if (k == klaunch(i)) then 
+         qtp0(i) = q(i,k)   ! Parcel launch total water (assuming subsaturated) - OK????.
+         sp0(i)  = entropy(t(i,k),p(i,k),qtp0(i))  ! Parcel launch entropy.
+         mp0(i)  = 1._r8       ! Parcel launch relative mass (i.e. 1 parcel stays 1 parcel for dmpdp=0, undilute). 
+         smix(i,k)  = sp0(i)
+         qtmix(i,k) = qtp0(i)
+         tfguess = t(i,k)
+         rcall = 1
+         call ientropy (rcall,i,lchnk,smix(i,k),p(i,k),qtmix(i,k),tmix(i,k),qsmix(i,k),tfguess)
+      end if
+
+
+! Entraining levels
+      
+      if (k < klaunch(i)) then 
+
+! Set environmental values for this level.                 
+         
+         dp = (p(i,k)-p(i,k+1)) ! In -ve mb as p decreasing with height - difference between center of layers.
+         qtenv = 0.5_r8*(q(i,k)+q(i,k+1))         ! Total water of environment.
+         tenv  = 0.5_r8*(t(i,k)+t(i,k+1)) 
+         penv  = 0.5_r8*(p(i,k)+p(i,k+1))
+
+         senv  = entropy(tenv,penv,qtenv)  ! Entropy of environment.   
+
+! Determine fractional entrainment rate /pa given value /m.
+
+         dpdz = -(penv*grav)/(rgas*tenv) ! in mb/m since  p in mb.
+         dzdp = 1._r8/dpdz                  ! in m/mb
+         dmpdp = dmpdz*dzdp              ! /mb Fractional entrainment
+
+! Sum entrainment to current level
+! entrains q,s out of intervening dp layers, in which linear variation is assumed
+! so really it entrains the mean of the 2 stored values.
+
+         sp(i)  = sp(i)  - dmpdp*dp*senv 
+         qtp(i) = qtp(i) - dmpdp*dp*qtenv 
+         mp(i)  = mp(i)  - dmpdp*dp
+            
+! Entrain s and qt to next level.
+
+         smix(i,k)  = (sp0(i)  +  sp(i)) / (mp0(i) + mp(i))
+         qtmix(i,k) = (qtp0(i) + qtp(i)) / (mp0(i) + mp(i))
+
+! Invert entropy from s and q to determine T and saturation-capped q of mixture.
+! t(i,k) used as a first guess so that it converges faster.
+
+         tfguess = tmix(i,k+1)
+         rcall = 2
+         call ientropy(rcall,i,lchnk,smix(i,k),p(i,k),qtmix(i,k),tmix(i,k),qsmix(i,k),tfguess)   
+!
+! Determine if this is lcl of this column if qsmix <= qtmix.
+! FIRST LEVEL where this happens on ascending.
+
+         if (qsmix(i,k) <= qtmix(i,k) .and. qsmix(i,k+1) > qtmix(i,k+1)) then
+            lcl(i) = k
+            qxsk   = qtmix(i,k) - qsmix(i,k)
+            qxskp1 = qtmix(i,k+1) - qsmix(i,k+1)
+            dqxsdp = (qxsk - qxskp1)/dp
+            pl(i)  = p(i,k+1) - qxskp1/dqxsdp    ! pressure level of actual lcl.
+            dsdp   = (smix(i,k)  - smix(i,k+1))/dp
+            dqtdp  = (qtmix(i,k) - qtmix(i,k+1))/dp
+            slcl   = smix(i,k+1)  +  dsdp* (pl(i)-p(i,k+1))  
+            qtlcl  = qtmix(i,k+1) +  dqtdp*(pl(i)-p(i,k+1))
+
+            tfguess = tmix(i,k)
+            rcall = 3
+            call ientropy (rcall,i,lchnk,slcl,pl(i),qtlcl,tl(i),qslcl,tfguess)
+!            write(iulog,*)' '
+!            write(iulog,*)' p',p(i,k+1),pl(i),p(i,lcl(i))
+!            write(iulog,*)' t',tmix(i,k+1),tl(i),tmix(i,lcl(i))
+!            write(iulog,*)' s',smix(i,k+1),slcl,smix(i,lcl(i))
+!            write(iulog,*)'qt',qtmix(i,k+1),qtlcl,qtmix(i,lcl(i))
+!            write(iulog,*)'qs',qsmix(i,k+1),qslcl,qsmix(i,lcl(i))
+
+         endif
+!         
+      end if !  k < klaunch
+
+ 
+   end do ! Levels loop
+end do ! Columns loop
+
+!!!!!!!!!!!!!!!!!!!!!!!!!!END ENTRAINMENT LOOP!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+!! Could stop now and test with this as it will provide some estimate of buoyancy
+!! without the effects of freezing/condensation taken into account for tmix.
+
+!! So we now have a profile of entropy and total water of the entraining parcel
+!! Varying with height from the launch level klaunch parcel=environment. To the 
+!! top allowed level for the existence of convection.
+
+!! Now we have to adjust these values such that the water held in vaopor is < or 
+!! = to qsmix. Therefore, we assume that the cloud holds a certain amount of
+!! condensate (lwmax) and the rest is rained out (xsh2o). This, obviously 
+!! provides latent heating to the mixed parcel and so this has to be added back 
+!! to it. But does this also increase qsmix as well? Also freezing processes
+ 
+
+xsh2o = 0._r8
+ds_xsh2o = 0._r8
+ds_freeze = 0._r8
+
+!!!!!!!!!!!!!!!!!!!!!!!!!PRECIPITATION/FREEZING LOOP!!!!!!!!!!!!!!!!!!!!!!!!!!
+!! Iterate solution twice for accuracy
+
+
+
+do k = pver, msg+1, -1
+   do i=1,ncol    
+      
+! Initialize variables at k=klaunch
+      
+      if (k == klaunch(i)) then
+
+! Set parcel values at launch level assume no liquid water.            
+
+         tp(i,k)    = tmix(i,k)
+         qstp(i,k)  = q(i,k) 
+         tpv(i,k)   =  (tp(i,k) + tpert(i)) * (1._r8+1.608_r8*qstp(i,k)) / (1._r8+qstp(i,k))
+         
+      end if
+
+      if (k < klaunch(i)) then
+            
+! Initiaite loop if switch(2) = .T. - RBN:DILUTE - TAKEN OUT BUT COULD BE RETURNED LATER.
+
+! Iterate nit_lheat times for s,qt changes.
+
+         do ii=0,nit_lheat-1            
+
+! Rain (xsh2o) is excess condensate, bar LWMAX (Accumulated loss from qtmix).
+
+            xsh2o(i,k) = max (0._r8, qtmix(i,k) - qsmix(i,k) - lwmax)
+
+! Contribution to ds from precip loss of condensate (Accumulated change from smix).(-ve)                     
+                     
+            ds_xsh2o(i,k) = ds_xsh2o(i,k+1) - cpliq * log (tmix(i,k)/tfreez) * max(0._r8,(xsh2o(i,k)-xsh2o(i,k+1)))
+!
+! Entropy of freezing: latice times amount of water involved divided by T.
+!
+ 
+            if (tmix(i,k) <= tfreez+tscool .and. ds_freeze(i,k+1) == 0._r8) then ! One off freezing of condensate. 
+               ds_freeze(i,k) = (latice/tmix(i,k)) * max(0._r8,qtmix(i,k)-qsmix(i,k)-xsh2o(i,k)) ! Gain of LH
+            end if
+            
+            if (tmix(i,k) <= tfreez+tscool .and. ds_freeze(i,k+1) /= 0._r8) then ! Continual freezing of additional condensate.
+               ds_freeze(i,k) = ds_freeze(i,k+1)+(latice/tmix(i,k)) * max(0._r8,(qsmix(i,k+1)-qsmix(i,k)))
+            end if
+            
+! Adjust entropy and accordingly to sum of ds (be careful of signs).
+
+            new_s = smix(i,k) + ds_xsh2o(i,k) + ds_freeze(i,k) 
+
+! Adjust liquid water and accordingly to xsh2o.
+
+            new_q = qtmix(i,k) - xsh2o(i,k)
+
+! Invert entropy to get updated Tmix and qsmix of parcel.
+
+            tfguess = tmix(i,k)
+            rcall =4
+            call ientropy (rcall,i,lchnk,new_s, p(i,k), new_q, tmix(i,k), qsmix(i,k), tfguess)
+            
+         end do  ! Iteration loop for freezing processes.
+
+
+! tp  - Parcel temp is temp of mixture.
+! tpv - Parcel v. temp should be density temp with new_q total water. 
+
+         tp(i,k)    = tmix(i,k)
+
+! tpv = tprho in the presence of condensate (i.e. when new_q > qsmix)
+
+         if (new_q > qsmix(i,k)) then  ! Super-saturated so condensate present - reduces buoyancy.
+            qstp(i,k) = qsmix(i,k)
+         else                          ! Just saturated/sub-saturated - no condensate virtual effects.
+            qstp(i,k) = new_q
+         end if
+
+         tpv(i,k) = (tp(i,k)+tpert(i))* (1._r8+1.608_r8*qstp(i,k)) / (1._r8+ new_q) 
+
+      end if ! k < klaunch
+   end do ! Loop for columns
+end do  ! Loop for vertical levels.
+
+
+return
+end subroutine parcel_dilute
+
+!-----------------------------------------------------------------------------------------
+real(r8) function entropy(TK,p,qtot)
+!-----------------------------------------------------------------------------------------
+!
+! TK(K),p(mb),qtot(kg/kg)
+! from Raymond and Blyth 1992
+!
+     real(r8), intent(in) :: p,qtot,TK
+     real(r8) :: qv,qst,e,est,L,eref,pref
+
+pref = 1000.0_r8           ! mb
+eref = 6.106_r8            ! sat p at tfreez (mb)
+
+L = rl - (cpliq - cpwv)*(TK-tfreez)         ! T IN CENTIGRADE
+
+! Replace call to satmixutils.
+
+call qmmr_hPa(TK, p, est, qst)
+
+qv = min(qtot,qst)                         ! Partition qtot into vapor part only.
+e = qv*p / (eps1 +qv)
+
+entropy = (cpres + qtot*cpliq)*log( TK/tfreez) - rgas*log( (p-e)/pref ) + &
+        L*qv/TK - qv*rh2o*log(qv/qst)
+! 
+return
+end FUNCTION entropy
+
+!
+!-----------------------------------------------------------------------------------------
+   SUBROUTINE ientropy (rcall,icol,lchnk,s,p,qt,T,qst,Tfg)
+!-----------------------------------------------------------------------------------------
+!
+! p(mb), Tfg/T(K), qt/qv(kg/kg), s(J/kg). 
+! Inverts entropy, pressure and total water qt 
+! for T and samixurated vapor mixing ratio
+! 
+
+!     use phys_grid, only: get_rlon_p, get_rlat_p
+
+     integer, intent(in) :: icol, lchnk, rcall
+     real(r8), intent(in)  :: s, p, Tfg, qt
+     real(r8), intent(out) :: qst, T
+     real(r8) :: qv,Ts,dTs,fs1,fs2,est
+     real(r8) :: pref,eref,L,e
+     real(r8) :: this_lat,this_lon
+     integer :: LOOPMAX,i
+
+LOOPMAX = 100                   !* max number of iteration loops 
+
+! Values for entropy
+pref = 1000.0_r8           ! mb ref pressure.
+eref = 6.106_r8           ! sat p at tfreez (mb)
+
+! Invert the entropy equation -- use Newton's method
+
+Ts = Tfg                  ! Better first guess based on Tprofile from conv.
+
+converge: do i=0, LOOPMAX
+
+   L = rl - (cpliq - cpwv)*(Ts-tfreez) 
+
+   call qmmr_hPa(Ts, p, est, qst)
+
+   qv = min(qt,qst) 
+   e = qv*p / (eps1 +qv)  ! Bolton (eq. 16)
+   fs1 = (cpres + qt*cpliq)*log( Ts/tfreez ) - rgas*log( (p-e)/pref ) + &
+        L*qv/Ts - qv*rh2o*log(qv/qst) - s
+   
+   L = rl - (cpliq - cpwv)*(Ts-1._r8-tfreez)         
+
+   call qmmr_hPa(Ts-1._r8, p, est, qst)
+   qv = min(qt,qst) 
+   e = qv*p / (eps1 +qv)
+   fs2 = (cpres + qt*cpliq)*log( (Ts-1._r8)/tfreez ) - rgas*log( (p-e)/pref ) + &
+        L*qv/(Ts-1._r8) - qv*rh2o*log(qv/qst) - s 
+   
+   dTs = fs1/(fs2 - fs1)
+   Ts  = Ts+dTs
+   if (abs(dTs).lt.0.001_r8) exit converge
+ !  if (i .eq. LOOPMAX - 1) then
+ !     this_lat = get_rlat_p(lchnk, icol)*57.296_r8
+ !     this_lon = get_rlon_p(lchnk, icol)*57.296_r8
+ !     write(iulog,*) '*** ZM_CONV: IENTROPY: Failed and about to exit, info follows ****'
+ !     write(iulog,100) 'ZM_CONV: IENTROPY. Details: call#,lchnk,icol= ',rcall,lchnk,icol, &
+ !      ' lat: ',this_lat,' lon: ',this_lon, &
+ !      ' P(mb)= ', p, ' Tfg(K)= ', Tfg, ' qt(g/kg) = ', 1000._r8*qt, &
+ !      ' qst(g/kg) = ', 1000._r8*qst,', s(J/kg) = ',s
+ !     call endrun('**** ZM_CONV IENTROPY: Tmix did not converge ****')
+ !  end if
+enddo converge
+
+! Replace call to satmixutils.
+
+call qmmr_hPa(Ts, p, est, qst)
+
+qv = min(qt,qst)                             !       /* check for saturation */
+T = Ts 
+
+ 100    format (A,I1,I4,I4,7(A,F6.2))
+
+return
+end SUBROUTINE ientropy
+
+! Wrapper for qmmr that does translation between Pa and hPa
+! qmmr uses Pa internally, so get qmmr right, need to pass in Pa.
+! Afterward, set es back to hPa.
+!elemental subroutine qmmr_hPa(t, p, es, qm)
+subroutine qmmr_hPa(t, p, es, qm)
+  !use wv_saturation, only: qmmr
+
+  ! Inputs
+  real(r8), intent(in) :: t    ! Temperature (K)
+  real(r8), intent(in) :: p    ! Pressure (hPa)
+  ! Outputs
+  real(r8), intent(out) :: es  ! Saturation vapor pressure (hPa)
+  real(r8), intent(out) :: qm  ! Saturation mass mixing ratio
+                               ! (vapor mass over dry mass, kg/kg)
+
+  call qmmr(t, p*100._r8, es, qm)
+
+  es = es*0.01_r8
+
+end subroutine qmmr_hPa
+
+elemental subroutine qmmr(t, p, es, qm)
+  !------------------------------------------------------------------!
+  ! Purpose:                                                         !
+  !     Provide saturation mass mixing ratio.                        !
+  !                                                                  !
+  ! Note that qmmr is a ratio over dry air, whereas qsat is a ratio  !
+  ! over total mass. These differ mainly at low pressures, where     !
+  ! SVP may exceed the actual pressure, and therefore qmmr can blow  !
+  ! up.                                                              !
+  !------------------------------------------------------------------!
+  use wv_sat_methods, only: &
+       wv_sat_svp_water,wv_sat_svp_to_qmmr
+
+
+  ! Inputs
+  real(r8), intent(in) :: t    ! Temperature
+  real(r8), intent(in) :: p    ! Pressure
+  ! Outputs
+  real(r8), intent(out) :: es  ! Saturation vapor pressure
+  real(r8), intent(out) :: qm  ! Saturation mass mixing ratio
+                               ! (vapor mass over dry mass)
+
+  es = wv_sat_svp_water(t)
+
+  qm = wv_sat_svp_to_qmmr(es, p)
+
+  ! Ensures returned es is consistent with limiters on qmmr.
+  es = min(es, p)
+
+end subroutine qmmr
+
+end module zm_conv

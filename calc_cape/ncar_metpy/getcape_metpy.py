@@ -9,13 +9,15 @@ import metpy.constants as mpconsts
 import matplotlib.pyplot as plt
 import sys
 
-fid = Dataset("/global/homes/z/zhangtao/cape/scam/cesm1_2_2/CAPE_new/mymods/Arm_CF_1999_2009_uniform.nc")
+fid = Dataset("/global/homes/z/zhangtao/ML_trigger/calc_cape/scam_offline/Arm_CF_1999_2009_uniform.nc")
 fid = Dataset("/global/homes/z/zhangtao/ML_trigger/calc_cape/scam_offline/goamazon_2014_2015.nc")
+fid = Dataset("/global/homes/z/zhangtao/CPS_trigger/data/sgp/arm_continuous_at_sgp/ARM97_4scam_uniform.nc")
+fid = Dataset("/global/homes/z/zhangtao/ML_trigger/ML/data/TWP06_4scam_uniform.nc")
 
 t = fid.variables['T'][:] #K
 print(t.shape)
-lev = fid.variables['lev'][:] #mba
-print(lev.shape)
+lev = fid.variables['lev'][:] / 100.0 #mba
+print(lev)
 q = fid.variables['q'][:] / 1000.0 #g/kg
 print(q.shape)
 
@@ -48,4 +50,5 @@ for i in range(t.shape[0]):
     cin[i] = b.magnitude
 
 
-np.savetxt("cape_metpy.txt", cape)
+#np.savetxt("cape_metpy.txt", cape)
+np.savetxt("cin_mao.txt", cin)
